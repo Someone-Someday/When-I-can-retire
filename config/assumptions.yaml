@@ -1,0 +1,48 @@
+# Retirement planner — all defaults live here (PLAN.md §2.3, §4).
+#
+# Conventions:
+#   * Every money figure is in today's EUR (real terms).
+#   * Units are in the key name: *_monthly = EUR per month, otherwise a lump sum.
+#   * Rates are decimals: 0.04 = 4% per year.
+#   * Age ranges are half-open: start_age is included, end_age is not.
+#   * Each value has a `# source:` note saying where it comes from.
+
+person:
+  current_age: 40                 # source: PLACEHOLDER (required input, PLAN §4.1) — set your own
+  retirement_age: 65              # source: PLAN §4.1 default (slider 40–75)
+  life_expectancy: 95             # source: PLAN §4.1 default, deliberately conservative (slider 80–105)
+
+# Money today. Phase 4 fills these from data/snapshot.json; until then they are placeholders.
+money:
+  invested_assets: 150000         # source: PLACEHOLDER — replace with the data snapshot (PLAN §4.2)
+  cash_assets: 20000              # source: PLACEHOLDER — cash above your emergency buffer (PLAN §4.2)
+  monthly_spending_now: 2500      # source: PLACEHOLDER — 12-month average excl. transfers (PLAN §4.2, §6)
+  monthly_contribution: 1000      # source: PLACEHOLDER — 12-month average net savings flow (PLAN §4.2)
+
+assumptions:
+  real_return_pre_retirement: 0.04    # source: PLAN §4.3 default (slider 0–8%)
+  real_return_post_retirement: 0.03   # source: PLAN §4.3 default (slider 0–7%)
+  return_volatility: 0.12             # source: PLAN §4.3 default (Monte Carlo only, Phase 2)
+  inflation: 0.03                     # source: PLAN §4.3 default (nominal view only; not used in maths)
+  retirement_spending_ratio: 1.0      # source: PLAN §4.3 — retirement spending = ratio × monthly_spending_now (slider 0.5–1.3)
+  contribution_growth: 0.0            # source: PLAN §4.3 default — real growth of contributions per year
+  state_pension_monthly: 0            # source: PLAN §4.3/§4.4 — YOU MUST ENTER THIS; check your CNPP pension-points statement
+  state_pension_start_age: 65         # source: PLAN §4.3 default
+  tax_on_withdrawals: 0.0             # source: PLAN §4.3 placeholder; Romanian treatment still to be confirmed
+  fx_ron_per_eur: 4.97                # source: PLAN §4.3 default (used by ingest, Phase 4)
+
+  # List of {amount_monthly, start_age, end_age}, e.g. part-time work. Counted in retirement only.
+  other_income: []
+  # List of {age, amount}: lump sums added (+) or removed (−) at the end of that age's year.
+  one_off_events: []
+  # List of {from_age, to_age, delta_monthly}: retirement spending changes, e.g. relocation.
+  spending_phases: []
+
+simulation:
+  steps_per_year: 1               # source: PLAN §5.1 — annual steps; only 1 is supported for now
+  mid_year_convention: true       # source: PLAN §5.1 — flows earn/forgo half a year's return
+
+solver:
+  max_retirement_age: 75          # source: PLAN §4.1 slider upper bound; search stops here
+  target_success_probability: 0.85  # source: PLAN §5.2 default (Monte Carlo, Phase 2)
+  spending_tolerance_monthly: 1.0 # source: solver precision for max sustainable spending (EUR/month)
