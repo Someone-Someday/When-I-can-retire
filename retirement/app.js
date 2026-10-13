@@ -31,15 +31,18 @@
     return {
       example: true, country: 'RO', currency: 'RON', single: false, fxRates: { RON: 5.1, PLN: 4.25 }, endAge: 95, runs: 1000,
       people: [defaultPerson('You', 35, 12000, 55, 12, 60000, 10000), defaultPerson('Partner', 33, 9000, 53, 10, 40000, 0)],
-      liquid: 300000, savings: 4000,
-      spending: { monthly: 9000, otherIncome: 0, slowAfter75Pct: 15, flexible: false, flexCutPct: 10 },
-      market: { stockPct: 70, stockReturn: 5, stockVol: 16, bondReturn: 1, bondVol: 6, feePct: 0.3, taxDragPct: 0.3, pensionFundStockPct: 30, pensionFundFeePct: 0.5 },
+      liquid: 300000, savings: 4000, accounts: [], savingsTo: null, quiz: null,
+      spending: { monthly: 9000, otherIncome: 0, slowAfter75Pct: 15, flexible: false, flexCutPct: 10, cushionYears: 0 },
+      market: { stockPct: 70, stockReturn: 5, stockVol: 16, bondReturn: 1, bondVol: 6, feePct: 0.3, taxDragPct: 0.3, pensionFundStockPct: 30, pensionFundFeePct: 0.5,
+        inflation: 3.5, depositReal: 0.5, govReal: 1.5 },
       pension: { replacementPct: 0, fullCareer: 35, pillar2Pct: 4.75, haircutPct: 0 },
       ro: { avgGross: 9192, minSalary: 4050, vpr: 81, socialMin: 1281, pensionTaxPct: 19, taxFreeThreshold: 3000 }
     };
   }
-  // Fill anything missing in a stored plan from the defaults
+  // Fill anything missing in a stored plan from the defaults. An empty default list (accounts)
+  // means "any length": the saved list is kept as it is.
   function withDefaults(saved, def) {
+    if (Array.isArray(def) && !def.length) return Array.isArray(saved) ? saved : def;
     if (Array.isArray(def)) return Array.isArray(saved) && saved.length === def.length ? def.map((d, i) => withDefaults(saved[i], d)) : def;
     if (def && typeof def === 'object') {
       const out = {};
@@ -67,8 +70,10 @@
     const keys = path.split('.'), last = keys.pop();
     keys.reduce((x, k) => x[k], o)[last] = v;
   }
-  const MONEY = ['liquid', 'savings', 'spending.monthly', 'spending.otherIncome'].concat(
-    [0, 1].flatMap(i => ['salary', 'pfaIncome', 'casCustom', 'volBase', 'pensionOverride', 'p2Balance', 'p3Balance', 'p3Contribution'].map(k => 'people.' + i + '.' + k)));
+  // Every amount the currency switch converts, including each account balance
+  const MONEY = () => ['liquid', 'savings', 'spending.monthly', 'spending.otherIncome'].concat(
+    [0, 1].flatMap(i => ['salary', 'pfaIncome', 'casCustom', 'volBase', 'pensionOverride', 'p2Balance', 'p3Balance', 'p3Contribution'].map(k => 'people.' + i + '.' + k)),
+    (plan.accounts || []).map((_, i) => 'accounts.' + i + '.balance'));
 
   // The country decides which currencies are offered: its own and the euro
   const localCur = () => (E.COUNTRIES[plan.country] || E.COUNTRIES.MANUAL).currency;
@@ -241,7 +246,7 @@
   function setCurrency(to) {
     if (to === plan.currency) return;
     const from = plan.currency, k = perEur(to) / perEur(from);
-    MONEY.forEach(path => {
+    MONEY().forEach(path => {
       const v = getPath(plan, path);
       if (typeof v !== 'number') { delete fxMemo[path]; return; }
       const m = fxMemo[path] && fxMemo[path].as === v ? fxMemo[path] : { values: {} };
@@ -294,6 +299,16 @@
     p.runs = Math.round(n(p.runs, 1000, 100, 5000));
     p.market.stockPct = n(p.market.stockPct, 60, 0, 100);
     p.market.pensionFundStockPct = n(p.market.pensionFundStockPct, 30, 0, 100);
+    p.market.inflation = n(p.market.inflation, 3.5, -5, 50);
+    p.market.depositReal = n(p.market.depositReal, 0.5, -10, 20);
+    p.market.govReal = n(p.market.govReal, 1.5, -10, 20);
+    p.spending.cushionYears = n(p.spending.cushionYears, 0, 0, 10);
+    p.accounts = (Array.isArray(p.accounts) ? p.accounts : []).filter(a => a && E.ACCOUNT_TYPES[a.type]).map(a => {
+      const d = E.accountDefaults(a.type, p.country);
+      return { type: a.type, balance: n(a.balance, 0, 0, 1e12), stockPct: n(a.stockPct, d.stockPct, 0, 100), feePct: n(a.feePct, d.feePct, 0, 5), taxPct: n(a.taxPct, d.taxPct, 0, 50) };
+    });
+    const st = p.savingsTo;
+    p.savingsTo = Number.isInteger(st) && st >= 0 && st < p.accounts.length ? st : null;
     return p;
   }
 
