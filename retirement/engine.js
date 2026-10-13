@@ -42,6 +42,36 @@
     PLN: { label: 'Złoty', unit: 'zł', word: 'złoty', prefix: false, fx: 4.25 }
   };
 
+  /* Where the money sits. Tax is a % of the yearly nominal gain (Romania 2026); fee is %/yr.
+     kind decides how it grows: invest/generic follow the stock/bond mix, deposit and govbond earn
+     a fixed real rate, cash loses inflation. Outside Romania tax defaults to 0 and is user-edited. */
+  const ACCOUNT_TYPES = {
+    cash: { label: 'Cash and current account', other: 'Cash and current account', kind: 'cash', taxPct: 0, feePct: 0 },
+    deposit: { label: 'Bank deposit', other: 'Bank deposit', kind: 'deposit', taxPct: 10, feePct: 0 },
+    govbond: { label: 'Fidelis / Tezaur bonds', other: 'Government savings bonds', kind: 'govbond', taxPct: 0, feePct: 0 },
+    broker_ro: { label: 'ETFs at a Romanian broker', other: 'Investment account', kind: 'invest', taxPct: 3, feePct: 0.2 },
+    broker_foreign: { label: 'ETFs at a foreign broker', other: 'Investment account abroad', kind: 'invest', taxPct: 16, feePct: 0.2 },
+    fund: { label: 'Bank investment fund', other: 'Bank investment fund', kind: 'invest', taxPct: 3, feePct: 2.0 },
+    generic: { label: 'Savings and investments', other: 'Savings and investments', kind: 'generic', taxPct: 0, feePct: 0 }
+  };
+  const SAFE_KINDS = { cash: true, deposit: true, govbond: true };
+  const accountLabel = (type, country) => {
+    const t = ACCOUNT_TYPES[type] || ACCOUNT_TYPES.generic;
+    return country === 'RO' ? t.label : t.other;
+  };
+  // Defaults for a new account of this type in this country
+  function accountDefaults(type, country) {
+    const t = ACCOUNT_TYPES[type] || ACCOUNT_TYPES.generic;
+    return { type, balance: 0, stockPct: t.kind === 'invest' ? 100 : 60, feePct: t.feePct, taxPct: country === 'RO' ? t.taxPct : 0 };
+  }
+
+  /* Real return after a tax charged on the nominal gain. Inflation alone creates a taxable gain,
+     which is why a deposit can lose money in today's terms. Losses are not taxed. */
+  function afterTaxReal(realPct, taxPct, inflationPct) {
+    const r = realPct / 100, inf = inflationPct / 100, nominal = (1 + r) * (1 + inf) - 1;
+    return nominal > 0 ? r - nominal * (taxPct / 100) / (1 + inf) : r;
+  }
+
   const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
 
   /* ---------- Romanian state pension ---------- */
@@ -204,17 +234,16 @@
       pension: pensions[i].monthly * 12
     }));
     const T = Math.max(1, Math.round(plan.endAge - Math.min.apply(null, people.map(p => p.age))));
+    const acc = compileAccounts(plan);
     return {
       people, pensions, T,
-      liquid: num(plan.liquid, 0),
+      acc, savingsTo: acc.savingsTo, cushion: Math.max(0, num(s.cushionYears, 0)),
       spend: num(s.monthly, 0) * 12,
       other: num(s.otherIncome, 0) * 12,
       slow: num(s.slowAfter75Pct, 0) / 100,
       flex: !!s.flexible,
       flexCut: num(s.flexCutPct, 0) / 100,
-      wL: num(m.stockPct, 60) / 100,
       wP: num(m.pensionFundStockPct, 30) / 100,
-      costL: (num(m.feePct, 0) + num(m.taxDragPct, 0)) / 100,
       costP: num(m.pensionFundFeePct, 0) / 100,
       stock: lognormal(num(m.stockReturn, 5), num(m.stockVol, 16)),
       bond: lognormal(num(m.bondReturn, 1), num(m.bondVol, 6)),
@@ -222,22 +251,79 @@
     };
   }
 
+  /* Accounts as flat arrays for the hot loop. Without plan.accounts, one generic pot is built from
+     plan.liquid and the market settings, which reproduces the single-pot maths exactly. */
+  function compileAccounts(plan) {
+    const m = plan.market || {}, country = plan.country;
+    const list = Array.isArray(plan.accounts) && plan.accounts.length
+      ? plan.accounts.filter(a => a && ACCOUNT_TYPES[a.type]).map(a => Object.assign({}, a))
+      : [{ type: 'generic', balance: num(plan.liquid, 0), stockPct: num(m.stockPct, 60), feePct: num(m.feePct, 0) }];
+    if (!list.length) list.push({ type: 'generic', balance: 0, stockPct: num(m.stockPct, 60), feePct: num(m.feePct, 0) });
+    const hidden = list.map(() => false);
+    // A cushion needs somewhere safe to sit
+    if (num((plan.spending || {}).cushionYears, 0) > 0 && !list.some(a => SAFE_KINDS[ACCOUNT_TYPES[a.type].kind])) {
+      list.push({ type: 'govbond', balance: 0 }); hidden.push(true);
+    }
+    const n = list.length, out = {
+      n, list, hidden, kind: [], w: new Float64Array(n), fee: new Float64Array(n), extra: new Float64Array(n),
+      tax: new Float64Array(n), fixed: new Float64Array(n), safe: [], start: new Float64Array(n),
+      inflation: num(m.inflation, 3.5), savingsTo: 0
+    };
+    const inf = out.inflation / 100;
+    list.forEach((a, i) => {
+      const t = ACCOUNT_TYPES[a.type], d = accountDefaults(a.type, country);
+      out.kind.push(t.kind);
+      out.safe.push(!!SAFE_KINDS[t.kind]);
+      out.start[i] = Math.max(0, num(a.balance, 0));
+      out.w[i] = num(a.stockPct, t.kind === 'generic' ? num(m.stockPct, 60) : d.stockPct) / 100;
+      out.fee[i] = num(a.feePct, t.kind === 'generic' ? num(m.feePct, 0) : d.feePct) / 100;
+      out.tax[i] = t.kind === 'generic' ? 0 : num(a.taxPct, d.taxPct);
+      // The generic pot keeps its old flat drag for tax
+      out.extra[i] = t.kind === 'generic' ? num(m.taxDragPct, 0) / 100 : 0;
+      out.fixed[i] = t.kind === 'deposit' ? num(m.depositReal, 0.5) / 100
+        : t.kind === 'govbond' ? num(m.govReal, 1.5) / 100
+          : t.kind === 'cash' ? 1 / (1 + inf) - 1 : 0;
+    });
+    const firstGrowth = out.kind.findIndex((k, i) => !hidden[i] && (k === 'invest' || k === 'generic'));
+    const want = plan.savingsTo;
+    out.savingsTo = Number.isInteger(want) && want >= 0 && want < n && !hidden[want] ? want : Math.max(0, firstGrowth);
+    return out;
+  }
+
+  // Take `amount` from the accounts flagged in `pick`, in proportion to their balances; returns what was taken
+  function drawFrom(bal, n, pick, amount) {
+    let avail = 0;
+    for (let j = 0; j < n; j++) if (pick(j)) avail += bal[j];
+    const take = Math.min(avail, amount);
+    if (take <= 0) return 0;
+    const k = take / avail;
+    for (let j = 0; j < n; j++) if (pick(j)) bal[j] = k >= 1 ? 0 : bal[j] - bal[j] * k;
+    return take;
+  }
+
   /* One path. gen() yields {rs, rb} real returns for stocks and bonds.
      Fills outTotal/outLiquid (length T+1) with start-of-year balances and,
      when rows is an array, pushes a year-by-year record. */
   function runOnce(c, gen, outTotal, outLiquid, rows) {
-    const n = c.people.length;
-    let liquid = c.liquid;
+    const n = c.people.length, A = c.acc, na = A.n, to = c.savingsTo;
+    const bal = Float64Array.from(A.start), ret = new Float64Array(na);
+    const isSafe = j => A.safe[j], isRisky = j => !A.safe[j], any = () => true;
+    const sumBal = () => { let x = 0; for (let j = 0; j < na; j++) x += bal[j]; return x; };
     const p2 = c.people.map(p => p.p2), p3 = c.people.map(p => p.p3);
     let prevRet = 0, fail = null;
 
     for (let t = 0; t < c.T; t++) {
       let locked = 0, pots = 0;
+      const liquid = sumBal();
       for (let i = 0; i < n; i++) pots += p2[i] + p3[i];
       if (outTotal) { outTotal[t] = liquid + pots; outLiquid[t] = liquid; }
 
       const r = gen();
-      const retL = c.wL * r.rs + (1 - c.wL) * r.rb - c.costL;
+      // Gross real growth per account, before fees and tax
+      for (let j = 0; j < na; j++) {
+        const k = A.kind[j];
+        ret[j] = k === 'invest' || k === 'generic' ? A.w[j] * r.rs + (1 - A.w[j]) * r.rb : A.fixed[j];
+      }
       const retP = c.wP * r.rs + (1 - c.wP) * r.rb - c.costP;
 
       let anyWorking = false, pensionInc = 0, pensionPending = false;
@@ -252,12 +338,14 @@
       const row = rows ? {
         t, phase: anyWorking ? 'working' : 'retired', liquid, p2: p2.reduce((x, y) => x + y, 0),
         p3: p3.reduce((x, y) => x + y, 0), target: 0, pension: pensionInc, other: 0,
-        fromLiquid: 0, fromP3: 0, fromP2: 0, shortfall: 0, saved: 0
+        fromLiquid: 0, fromP3: 0, fromP2: 0, shortfall: 0, saved: 0,
+        accounts: Array.from(bal), feePaid: 0, taxPaid: 0, growth: 0, addedLiquid: 0
       } : null;
 
       if (anyWorking) {
         // Salaries cover living costs until the last person stops; pensions already in payment are saved
-        liquid += pensionInc;
+        bal[to] += pensionInc;
+        if (row) row.addedLiquid += pensionInc;
       } else {
         let target = c.spend;
         if (c.oldest + t >= 75) target *= 1 - c.slow;
@@ -265,10 +353,21 @@
         let need = target - pensionInc - c.other;
         let fromLiquid = 0, fromP3 = 0, fromP2 = 0;
         if (need <= 0) {
-          liquid -= need;
+          bal[to] -= need;
+          if (row) row.addedLiquid -= need;
           need = 0;
         } else {
-          fromLiquid = Math.min(liquid, need); liquid -= fromLiquid; need -= fromLiquid;
+          if (c.cushion > 0 && prevRet < 0) {
+            // After a bad year, live off the safe money and give the rest time to recover
+            fromLiquid = drawFrom(bal, na, isSafe, need);
+            fromLiquid += drawFrom(bal, na, isRisky, need - fromLiquid);
+          } else if (c.cushion > 0) {
+            fromLiquid = drawFrom(bal, na, isRisky, need);
+            fromLiquid += drawFrom(bal, na, isSafe, need - fromLiquid);
+          } else {
+            fromLiquid = drawFrom(bal, na, any, need);
+          }
+          need -= fromLiquid;
           for (let i = 0; i < n && need > 0; i++) {
             if (c.people[i].age + t >= c.people[i].p3Unlock) {
               const w = Math.min(p3[i], need); p3[i] -= w; need -= w; fromP3 += w;
@@ -277,6 +376,19 @@
           for (let i = 0; i < n && need > 0; i++) {
             if (c.people[i].age + t >= c.people[i].claimAge) {
               const w = Math.min(p2[i], need); p2[i] -= w; need -= w; fromP2 += w;
+            }
+          }
+        }
+        if (c.cushion > 0 && prevRet >= 0) {
+          // Refill the safe accounts to the cushion from the risky ones
+          let safe = 0;
+          for (let j = 0; j < na; j++) if (A.safe[j]) safe += bal[j];
+          const gap = c.cushion * target - safe;
+          if (gap > 0) {
+            const moved = drawFrom(bal, na, isRisky, gap);
+            if (moved > 0) {
+              if (safe > 0) { for (let j = 0; j < na; j++) if (A.safe[j]) bal[j] += moved * bal[j] / safe; }
+              else bal[A.safe.indexOf(true)] += moved;
             }
           }
         }
@@ -289,21 +401,35 @@
         }
       }
 
-      liquid *= 1 + retL;
+      // Grow each account: fee first, then tax on the nominal gain
+      let wsum = 0, wbal = 0, retTo = 0;
+      for (let j = 0; j < na; j++) {
+        const pre = ret[j] - A.fee[j] - A.extra[j];
+        const net = A.tax[j] > 0 ? afterTaxReal(pre * 100, A.tax[j], A.inflation) : pre;
+        if (row) {
+          row.growth += bal[j] * ret[j]; row.feePaid += bal[j] * A.fee[j];
+          row.taxPaid += bal[j] * (A.extra[j] + pre - net);
+        }
+        wsum += bal[j] * net; wbal += bal[j];
+        if (j === to) retTo = net;
+        bal[j] *= 1 + net;
+      }
       for (let i = 0; i < n; i++) { p2[i] *= 1 + retP; p3[i] *= 1 + retP; }
       for (let i = 0; i < n; i++) {
         const p = c.people[i];
         if (p.age + t < p.stopAge) {
-          liquid += p.savings; p2[i] += p.p2Contribution; p3[i] += p.p3Contribution;
-          if (row) row.saved += p.savings + p.p2Contribution + p.p3Contribution;
+          bal[to] += p.savings; p2[i] += p.p2Contribution; p3[i] += p.p3Contribution;
+          if (row) { row.saved += p.savings + p.p2Contribution + p.p3Contribution; row.addedLiquid += p.savings; }
         }
       }
-      prevRet = retL;
+      // Balance-weighted return; with nothing invested, the account savings go to
+      prevRet = wbal > 0 ? wsum / wbal : retTo;
       if (row) rows.push(row);
     }
     if (outTotal) {
       let pots = 0;
       for (let i = 0; i < n; i++) pots += p2[i] + p3[i];
+      const liquid = sumBal();
       outTotal[c.T] = liquid + pots; outLiquid[c.T] = liquid;
     }
     return fail;
@@ -383,6 +509,8 @@
     const med = { rs: Math.exp(c.stock.mu) - 1, rb: Math.exp(c.bond.mu) - 1 };
     res.rows = [];
     res.typicalFail = runOnce(c, () => med, null, null, res.rows);
+    res.accounts = c.acc.list.map((a, j) => ({ type: a.type, hidden: c.acc.hidden[j], start: c.acc.start[j], fee: c.acc.fee[j] * 100, tax: c.acc.tax[j] }));
+    res.savingsTo = c.savingsTo;
     res.milestones = milestones(c, plan);
 
     // Bridge: from the year both have stopped until the last pension / locked pot opens
@@ -426,7 +554,7 @@
   }
 
   const api = {
-    RO, COUNTRIES, CURRENCIES, roStabilityPoints, roNetPension, roEarlyPenalty, roContribution, roPension,
+    RO, COUNTRIES, CURRENCIES, ACCOUNT_TYPES, accountLabel, accountDefaults, afterTaxReal, roStabilityPoints, roNetPension, roEarlyPenalty, roContribution, roPension,
     statePension, simulate, solveEarliest, mulberry32
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

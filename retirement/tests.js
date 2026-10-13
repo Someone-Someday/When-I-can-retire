@@ -306,6 +306,75 @@
     ok(r.bands.p10[1] < 95000 && r.bands.p90[1] > 110000, 'spread reflects volatility');
   });
 
+  /* --- Accounts, fees and tax --- */
+  const acct = (type, balance, extra) => Object.assign({ type, balance, stockPct: 60, feePct: E.ACCOUNT_TYPES[type].feePct, taxPct: E.ACCOUNT_TYPES[type].taxPct }, extra || {});
+  // Nobody retires within the horizon, so balances only grow (or shrink) by their own returns
+  const growPlan = (accounts, over) => {
+    const p = flatPlan(Object.assign({ accounts }, over || {}));
+    p.people = p.people.map(x => Object.assign({}, x, { age: 40, stopAge: 70 }));
+    p.endAge = 60;
+    return p;
+  };
+  test('legacy plan without accounts equals one explicit generic account', () => {
+    const legacy = basePlan(), m = legacy.market;
+    const explicit = basePlan({ accounts: [{ type: 'generic', balance: legacy.liquid, stockPct: m.stockPct, feePct: m.feePct }] });
+    const a = E.simulate(legacy, { runs: 300, seed: 4 }), b = E.simulate(explicit, { runs: 300, seed: 4 });
+    near(a.successRate, b.successRate);
+    [5, 20, 40].forEach(t => { near(a.bands.p50[t], b.bands.p50[t], 1e-6); near(a.bands.p10[t], b.bands.p10[t], 1e-6); });
+    near(a.rows[30].liquid, b.rows[30].liquid, 1e-6);
+  });
+  test('tax on nominal gains: deposits barely grow, losses are not taxed', () => {
+    // 0.5% real at 3.5% inflation is 4.02% nominal; 10% of that costs 0.39% in today's money
+    near(E.afterTaxReal(0.5, 10, 3.5), 0.005 - 0.040175 * 0.1 / 1.035, 1e-12);
+    near(E.afterTaxReal(0.5, 10, 3.5), 0.00112, 1e-5);
+    near(E.afterTaxReal(-5, 16, 0), -0.05, 1e-12);
+    ok(E.afterTaxReal(0.5, 10, 6) < 0, 'with higher inflation the deposit loses money');
+  });
+  test('cash loses inflation: after 10 years = start / 1.035^10', () => {
+    const r = E.simulate(growPlan([acct('cash', 100000)]), { runs: 2 });
+    near(r.rows[10].liquid, 100000 / Math.pow(1.035, 10), 1e-6);
+  });
+  test('a deposit compounds at the after-tax real rate', () => {
+    const p = growPlan([acct('deposit', 100000)]);
+    p.market.depositReal = 0.5; p.market.inflation = 3.5;
+    const r = E.simulate(p, { runs: 2 }), g = E.afterTaxReal(0.5, 10, 3.5);
+    near(r.rows[10].liquid, 100000 * Math.pow(1 + g, 10), 1e-6);
+  });
+  test('a foreign broker grows less than a Romanian one at the same mix, fee and seed', () => {
+    const mk = type => { const p = growPlan([acct(type, 100000, { stockPct: 80, feePct: 0.2 })]); p.market = basePlan().market; p.market.inflation = 3.5; return p; };
+    const ro = E.simulate(mk('broker_ro'), { runs: 300, seed: 2 }), fo = E.simulate(mk('broker_foreign'), { runs: 300, seed: 2 });
+    ok(fo.bands.p50[20] < ro.bands.p50[20], 'foreign ' + fo.bands.p50[20] + ' < Romanian ' + ro.bands.p50[20]);
+    ok(fo.rows[5].taxPaid > ro.rows[5].taxPaid, 'more tax abroad');
+  });
+  test('monthly savings land only in the chosen account', () => {
+    const p = growPlan([acct('govbond', 50000), acct('govbond', 0)], { savingsTo: 1 });
+    p.market.govReal = 0; p.market.inflation = 0;
+    p.people[0] = Object.assign({}, p.people[0], { savings: 1000 });
+    const r = E.simulate(p, { runs: 2 });
+    near(r.rows[5].accounts[0], 50000); near(r.rows[5].accounts[1], 5 * 12000);
+    near(r.rows[5].addedLiquid, 12000);
+  });
+  test('cash cushion: after a good year the safe money is topped up to 2 years of spending', () => {
+    const p = flatPlan({ accounts: [acct('broker_ro', 600000, { feePct: 0 })] });
+    p.spending.cushionYears = 2; p.market.govReal = 0; p.market.inflation = 0;
+    const r = E.simulate(p, { runs: 2 });
+    ok(r.accounts.length === 2 && r.accounts[1].hidden && r.accounts[1].type === 'govbond', 'hidden bond account added');
+    near(r.rows[1].accounts[1], 24000, 1); near(r.rows[1].liquid, 600000 - 12000, 1e-6);
+  });
+  test('typical path adds up: start + added + growth - fees - taxes - withdrawals = end', () => {
+    const p = basePlan({ accounts: [acct('cash', 20000), acct('deposit', 80000), acct('broker_foreign', 150000, { stockPct: 90 }), acct('fund', 50000)] });
+    p.market.inflation = 3.5; p.market.depositReal = 0.5; p.market.govReal = 1.5; p.spending.cushionYears = 2;
+    const r = E.simulate(p, { runs: 50 });
+    let bal = r.rows[0].liquid, fee = 0, tax = 0;
+    r.rows.forEach((x, i) => {
+      bal += x.addedLiquid + x.growth - x.feePaid - x.taxPaid - x.fromLiquid;
+      fee += x.feePaid; tax += x.taxPaid;
+      const next = i + 1 < r.rows.length ? r.rows[i + 1].liquid : null;
+      if (next != null) near(bal, next, 1, 'year ' + x.t);
+    });
+    ok(fee > 0 && tax > 0, 'fees and taxes recorded');
+  });
+
   /* --- Solver --- */
   test('solver returns the first year that reaches the target', () => {
     const p = basePlan();
