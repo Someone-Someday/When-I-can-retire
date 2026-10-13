@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
 <header class="top">
@@ -26,7 +26,9 @@
 
   <section class="results">
     <div class="card answer" id="answer" aria-live="polite">
+      <p class="example" id="example" hidden>These are example numbers. <button type="button" class="btn link" id="exampleGo">Enter yours</button> and the answer updates as you type.</p>
       <div class="headline" id="headline">Working it out…</div>
+      <p class="headnote" id="headnote"></p>
       <div class="verdict" id="verdict"></div>
       <ul class="steps" id="steps"></ul>
       <p class="eyebrow">What if you…</p>
@@ -66,7 +68,7 @@
 </main>
 
 <div class="tip" id="tip" hidden></div>
-<script src="engine.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="engine.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

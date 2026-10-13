@@ -310,16 +310,18 @@
   function milestones(c, plan) {
     const out = [];
     c.people.forEach((p, i) => {
-      const name = plan.people[i].name || 'Person ' + (i + 1);
+      const name = (plan.people[i].name || '').trim() || 'Person ' + (i + 1);
+      // "You stop" / "Your pension", otherwise "Ana stops" / "Ana's pension"
+      const you = /^(you|me|i)$/i.test(name), whose = you ? 'Your' : name + "'s";
       const add = (age, label) => {
         const t = age - p.age;
-        if (t >= 0 && t <= c.T) out.push({ t, label: name + ' ' + label });
+        if (t >= 0 && t <= c.T) out.push({ t, label });
       };
       const c3 = (COUNTRIES[plan.country] || COUNTRIES.MANUAL).pillar3;
-      add(p.stopAge, 'stops working');
-      if (p.p3 > 0 || p.p3Contribution > 0) add(p.p3Unlock, c3 + ' unlocks');
-      if (p.pension > 0) add(p.claimAge, 'pension starts');
-      else if (p.p2 > 0 || p.p2Contribution > 0) add(p.claimAge, 'Pillar II unlocks');
+      add(p.stopAge, (you ? 'You stop' : name + ' stops') + ' working');
+      if (p.p3 > 0 || p.p3Contribution > 0) add(p.p3Unlock, whose + ' ' + c3 + ' unlocks');
+      if (p.pension > 0) add(p.claimAge, whose + ' state pension starts');
+      else if (p.p2 > 0 || p.p2Contribution > 0) add(p.claimAge, whose + ' Pillar II unlocks');
     });
     return out.sort((a, b) => a.t - b.t);
   }

@@ -29,7 +29,7 @@
   }
   function defaultPlan() {
     return {
-      country: 'RO', currency: 'RON', single: false, fx: 5.1, endAge: 95, runs: 1000,
+      example: true, country: 'RO', currency: 'RON', single: false, fx: 5.1, endAge: 95, runs: 1000,
       people: [defaultPerson('You', 35, 12000, 55, 12, 60000, 10000), defaultPerson('Partner', 33, 9000, 53, 10, 40000, 0)],
       liquid: 300000, savings: 4000,
       spending: { monthly: 9000, otherIncome: 0, slowAfter75Pct: 15, flexible: false, flexCutPct: 10 },
@@ -51,12 +51,13 @@
 
   // Plans saved before the currency switch existed used lei for Romania and euros elsewhere
   function hydrate(saved) {
+    if (saved && saved.example === undefined) saved.example = false;
     if (saved && !saved.currency) saved.currency = !saved.country || saved.country === 'RO' ? 'RON' : 'EUR';
     return withDefaults(saved, defaultPlan());
   }
 
   let plan = hydrate(store.get(LS_CURRENT, null));
-  let showCountry = false;
+  const howOpen = [false, false];
   const startYear = new Date().getFullYear();
 
   const getPath = (o, path) => path.split('.').reduce((x, k) => (x == null ? x : x[k]), o);
@@ -73,6 +74,7 @@
     const s = Math.round(n).toLocaleString('en-US');
     return isRon() ? s + ' lei' : '€' + s;
   };
+  const grouped = n => (typeof n === 'number' && isFinite(n) ? Math.round(n).toLocaleString('en-US') : '');
   const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
   const country = () => E.COUNTRIES[plan.country] || E.COUNTRIES.MANUAL;
   const count = () => (plan.single ? 1 : 2);
@@ -82,10 +84,11 @@
   function field(f) {
     const v = getPath(plan, f.path);
     const unit = f.money ? cur() + (f.per || '') : (f.unit || '');
-    const attrs = f.text ? 'type="text"' : 'type="number" inputmode="decimal" step="' + (f.step || 1) + '" min="0"';
+    const attrs = f.text ? 'type="text"' : f.money ? 'type="text" inputmode="numeric" data-money' : 'type="number" inputmode="decimal" step="' + (f.step || 1) + '" min="0"';
+    const shown = v == null ? '' : f.money ? grouped(v) : v;
     return '<label class="f' + (f.wide ? ' wide' : '') + '"><span>' + f.label + '</span><span class="inp"><input ' + attrs +
       ' data-path="' + f.path + '"' + (f.rerender ? ' data-rerender' : '') + (f.optional ? ' data-optional placeholder="' + (f.placeholder || 'auto') + '"' : '') +
-      ' value="' + (v == null ? '' : esc(v)) + '">' + (unit ? '<em>' + unit + '</em>' : '') + '</span>' +
+      ' value="' + esc(shown) + '">' + (unit ? '<em>' + unit + '</em>' : '') + '</span>' +
       (f.hint ? '<small>' + f.hint + '</small>' : '') + '</label>';
   }
   const select = (path, label, options) => '<label class="f wide"><span>' + label + '</span><span class="inp"><select data-path="' + path + '">' +
@@ -105,7 +108,7 @@
   }
   function sliderText(path) {
     const v = getPath(plan, path), m = path.match(/^people\.(\d)\.stopAge$/);
-    if (m) return v + ' · in ' + (startYear + Math.max(0, v - plan.people[+m[1]].age));
+    if (m) return 'age ' + v + ' · ' + (startYear + Math.max(0, v - plan.people[+m[1]].age));
     return fmt(v) + ' a month';
   }
   // Value label plus the filled part of the track
@@ -132,7 +135,7 @@
         type === 'employee' ? field({ path: p + 'salary', label: 'Gross monthly salary', money: true, wide: true }) : '',
         type === 'pfa' ? field({ path: p + 'pfaIncome', label: 'Expected net income per year', money: true, wide: true }) : '',
         type === 'voluntary' ? field({ path: p + 'volBase', label: 'Monthly declared base', money: true, wide: true, hint: 'At least one minimum salary, or 0' }) : '',
-        field({ path: p + 'yearsContributed', label: 'Years contributed so far', unit: 'yrs', wide: true }),
+        field({ path: p + 'yearsContributed', label: 'Years of pension contributions so far', unit: 'yrs', wide: true }),
         '<p class="explain wide" id="explain' + i + '"></p>',
         x.knowPension ? field({ path: p + 'pensionOverride', label: 'My exact net pension', money: true, per: '/mo', optional: true, placeholder: 'enter', wide: true }) + toggleLink(p + 'knowPension', 'Estimate it for me instead')
           : toggleLink(p + 'knowPension', 'I know my exact pension'),
@@ -187,21 +190,23 @@
       '<button type="button" class="btn link" id="reset">Reset everything to the example</button>';
 
     form.innerHTML =
+      '<div class="card" id="countryCard"><h2>Where you work</h2>' +
+        select('country', 'Your state pension comes from', Object.keys(E.COUNTRIES).map(code => [code, E.COUNTRIES[code].name])) +
+        '<p class="note">' + (ro ? 'Uses Romania\'s official pension formula.'
+          : c.mode === 'rate' ? 'Rough estimate for ' + esc(c.name) + ': the pension is a share of salary. Enter your exact pension below if you know it.'
+            : 'No formula for other countries: enter each exact pension below.') + '</p></div>' +
       '<div class="card"><div class="cardhead"><h2>About you</h2><div class="seg" id="who">' +
         '<button type="button" data-single="0" aria-pressed="' + !plan.single + '">The two of us</button>' +
         '<button type="button" data-single="1" aria-pressed="' + !!plan.single + '">Just me</button></div></div>' +
         about +
-        '<div class="grid2 sep">' + field({ path: 'liquid', label: 'Money you can use anytime', money: true, wide: true, hint: 'Savings, deposits, ETFs and funds' }) + '</div>' +
+        '<div class="grid2 sep">' + field({ path: 'liquid', label: plan.single ? 'Your savings and investments' : 'Your savings and investments together', money: true, wide: true, hint: 'Bank savings, deposits, ETFs and funds. Not pensions.' }) + '</div>' +
       '</div>' +
-      '<details class="card" id="adjust"><summary><h2>Adjust details</h2></summary>' + details + '</details>' +
-      (showCountry || !ro ? '<div class="card">' + select('country', 'Country', Object.keys(E.COUNTRIES).map(code => [code, E.COUNTRIES[code].name])) +
-        (ro ? '' : '<p class="note">Approximate preset: the pension is a share of salary. Enter your exact pension if you know it.</p>') + '</div>'
-        : '<button type="button" class="btn link" id="showCountry">Not in Romania?</button>');
+      '<details class="card" id="adjust"><summary><h2>More settings</h2><span class="sumnote">Pension age, fees, returns, scenarios</span></summary>' + details + '</details>';
     // Sliders sit next to the answer so it can be watched while dragging
     $('play').innerHTML =
       Array.from({ length: count() }, (_, i) => slider('people.' + i + '.stopAge', (plan.people[i].name === 'You' ? 'You stop' : esc(plan.people[i].name || 'Person ' + (i + 1)) + ' stops') + ' working at', Math.min(74, plan.people[i].age), 75, 1)).join('') +
-      slider('savings', 'Saving', 0, moneyMax(plan.savings, 15000 * k), 100 * k) +
-      slider('spending.monthly', 'Spending', 1000 * k, moneyMax(plan.spending.monthly, 30000 * k), 100 * k);
+      slider('savings', count() > 1 ? 'You save together' : 'You save', 0, moneyMax(plan.savings, 15000 * k), 100 * k) +
+      slider('spending.monthly', 'You spend in retirement', 1000 * k, moneyMax(plan.spending.monthly, 30000 * k), 100 * k);
     open.forEach(id => { if ($(id)) $(id).open = true; });
     renderScenarios();
     updateSliderLabels();
@@ -314,8 +319,9 @@
     const v = verdict(res.successRate), t = stopT(p);
     const changed = lastRank != null && lastRank !== v.rank;
     lastRank = v.rank;
-    $('verdict').innerHTML = '<span title="Works in ' + Math.round(res.successRate * 100) + ' of 100 simulated futures">' + (changed ? pill(v).replace('class="status', 'class="status pop') : pill(v)) + '</span>' +
-      '<span>Your plan: stop working ' + (t <= 0 ? 'now' : 'in ' + (startYear + t)) + ' (' + agesAt(p, Math.max(0, t)) + ') and spend ' + fmt(p.spending.monthly) + ' a month.</span>';
+    $('verdict').innerHTML = '<span>Your current plan: stop ' + (t <= 0 ? 'now' : 'in ' + (startYear + t)) + ' (' + agesAt(p, Math.max(0, t)) + '), spend ' + fmt(p.spending.monthly) + ' a month.</span>' +
+      (changed ? pill(v).replace('class="status', 'class="status pop') : pill(v)) +
+      '<span class="odds">works in ' + Math.round(res.successRate * 100) + ' of 100 futures</span>';
   }
 
   function renderExplain(p, res) {
@@ -328,11 +334,15 @@
       else if (s.source === 'missing') text = 'No estimate for this country – enter your exact pension.';
       else if (!d) text = amount + ' About ' + Math.round(p.pension.replacementPct * Math.min(1, s.years / p.pension.fullCareer)) + '% of salary after ' + s.years + ' years (' + esc(c.name) + ', approximate).';
       else {
-        const how = x.earnType === 'dividends' ? 'Dividends don\'t build a state pension.'
+        const why = x.earnType === 'dividends' ? 'Dividends don\'t build a state pension.'
           : d.baseYearly <= 0 ? (x.earnType === 'pfa' ? 'Below 12 minimum salaries the pension contribution is optional, so nothing is paid in.' : 'Nothing is paid in, so no pension builds up.')
-            : 'You pay pension contributions on ' + fmt(d.baseYearly) + ' a year → ' + d.ppy.toFixed(2) + ' points a year → each extra year adds about ' + fmt(d.perYear) + ' a month to your pension.';
-        text = (d.eligible ? amount : d.baseYearly <= 0 ? 'No state pension.' : 'No state pension: ' + d.years + ' contributed years by pension age, 15 are needed.') + ' ' + how +
-          (d.baseYearly <= 0 && x.pointsSoFar == null && x.yearsContributed > 0 ? ' If earlier years earned points, enter them under Adjust details.' : '');
+            : null;
+        const how = d.baseYearly > 0 ? 'Contributions are paid on ' + fmt(d.baseYearly) + ' a year, which earns ' + d.ppy.toFixed(2) + ' points a year. Each extra year of work adds about ' + fmt(d.perYear) + ' a month to the pension.' : '';
+        text = (d.eligible ? amount : d.baseYearly <= 0 ? 'No state pension.' : 'No state pension: ' + d.years + ' contributed years by pension age, 15 are needed.') +
+          (why ? ' ' + why : '') +
+          (d.baseYearly <= 0 && x.pointsSoFar == null && x.yearsContributed > 0 ? ' If earlier years earned points, enter them under More settings.' : '') +
+          (how ? ' <button type="button" class="btn link" data-how="' + i + '" aria-expanded="' + howOpen[i] + '">' + (howOpen[i] ? 'Hide' : 'How?') + '</button>' +
+            (howOpen[i] ? '<span class="how">' + how + '</span>' : '') : '');
       }
       $('explain' + i).innerHTML = text;
     });
@@ -366,10 +376,11 @@
       const same = p.people.every(x => x.stopAge === x.age + solved.k);
       head = 'You can ' + both + 'stop working ' + (solved.k === 0 ? 'now' : 'in ' + (startYear + solved.k)) +
         ' <span class="who">(' + agesAt(p, solved.k) + ')</span>' +
-        (same ? '' : ' <button type="button" class="btn link" id="applySolve">Use these ages</button>');
+        (same ? '' : ' <button type="button" class="btn link" id="applySolve">Use ' + (solved.k === 0 ? 'now' : startYear + solved.k) + '</button>');
     }
     const el = $('headline');
     el.innerHTML = head;
+    $('headnote').textContent = solved.k == null ? 'Try stopping later, saving more or spending less.' : 'The earliest year that works in at least 90 of 100 simulated market futures.';
     if (lastHead !== null && lastHead !== el.textContent) { el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap'); }
     lastHead = el.textContent;
 
@@ -401,6 +412,7 @@
       return '<button type="button" class="btn chip" data-whatif="' + i + '">' + w.label + ' <span>→ ' + verdict(chance(cleanPlan(raw))).text + '</span></button>';
     }).join('');
     $('answer').classList.remove('stale');
+    $('example').hidden = !plan.example;
   }
 
   /* ---------- Charts ---------- */
@@ -491,7 +503,7 @@
   const series = () => [
     { key: 'pension', label: 'State pensions', color: 'var(--s1)' },
     { key: 'other', label: 'Other income', color: 'var(--s2)' },
-    { key: 'fromLiquid', label: 'Money you can use anytime', color: 'var(--s3)' },
+    { key: 'fromLiquid', label: 'Savings and investments', color: 'var(--s3)' },
     { key: 'fromP3', label: country().pillar3, color: 'var(--s4)' },
     { key: 'fromP2', label: isRon() ? 'Pilon II' : 'Pillar II', color: 'var(--s5)' },
     { key: 'shortfall', label: 'Not covered', color: 'var(--critical)' }
@@ -559,7 +571,7 @@
   function renderTable(p, res) {
     const mo = v => (v > 0.5 ? fmt(v / 12) : '–'), S = series();
     const head = ['Year', 'Ages', '', 'Spending /mo', 'State pension /mo', 'Other income /mo', 'From savings /mo', 'From ' + esc(S[3].label) + ' /mo', 'From ' + S[4].label + ' /mo', 'Not covered /mo',
-      'Money you can use anytime', esc(S[3].label), S[4].label, 'Total if worse', 'Total expected', 'Total if better'];
+      'Savings and investments', esc(S[3].label), S[4].label, 'Total if worse', 'Total expected', 'Total if better'];
     const body = res.rows.map(r => '<tr><td>' + (startYear + r.t) + '</td><td>' + p.people.map(x => x.age + r.t).join(' / ') + '</td><td>' +
       (r.phase === 'working' ? 'Working' : 'Retired') + '</td><td>' + mo(r.target) + '</td><td>' + mo(r.pension) + '</td><td>' + mo(r.other) + '</td><td>' +
       mo(r.fromLiquid) + '</td><td>' + mo(r.fromP3) + '</td><td>' + mo(r.fromP2) + '</td><td class="' + (r.shortfall > 0.5 ? 'short' : '') + '">' + mo(r.shortfall) + '</td><td>' +
@@ -573,7 +585,7 @@
       'Everything is in today\'s prices: growth is counted above inflation and state pensions are assumed to keep pace with prices.',
       p.runs.toLocaleString('en-US') + ' possible futures for the markets are simulated year by year. Very likely means the plan pays for every year in at least 90 of 100 futures, Likely in at least 75, Risky in fewer.',
       'While anyone still works, earnings are assumed to cover living costs and the monthly saving continues (split equally between you; a person\'s share stops when they stop working). Withdrawals start the year everyone has stopped.',
-      'Money is taken first from what you can use anytime, then from ' + c.pillar3 + ' once it unlocks, then from Pillar II once the state pension starts.',
+      'Money is taken first from savings and investments, then from ' + c.pillar3 + ' once it unlocks, then from Pillar II once the state pension starts.',
       c.mode === 'ro'
         ? 'Romanian state pension: points per year = monthly contribution base ÷ average gross salary (' + R.avgGross.toLocaleString('en-US') + ' lei). Employees: gross salary. PFA: nothing below 12 minimum salaries of yearly income, 12 minimum salaries up to 24, and 24 above. Dividends: nothing. A year counts only if it earns points. Extra "stability" points are added for long careers (0.5 a year for years 26–30, 0.75 for 31–35, 1 above 35). Pension = total points × ' + R.vpr + ' lei, never below the social minimum (' + R.socialMin.toLocaleString('en-US') + ' lei), and zero under 15 contributed years. ' + R.pensionTaxPct + '% is deducted from the part above ' + R.taxFreeThreshold.toLocaleString('en-US') + ' lei. Claiming up to 5 years early costs 0.4% a month. Only employees pay into Pilon II.'
         : c.mode === 'rate'
@@ -610,6 +622,12 @@
   function onInput(ev) {
     const el = ev.target, path = el.dataset.path;
     if (!path || el.tagName === 'SELECT') return;
+    plan.example = false;
+    if (el.hasAttribute('data-money')) {
+      const v = parseFloat(el.value.replace(/[^\d.]/g, ''));
+      setPath(plan, path, isNaN(v) ? (el.hasAttribute('data-optional') ? null : 0) : v);
+      return changed();
+    }
     if (el.type === 'checkbox') { setPath(plan, path, el.checked); return el.hasAttribute('data-rerender') ? refresh() : changed(); }
     if (el.type === 'text') setPath(plan, path, el.value);
     else {
@@ -623,6 +641,8 @@
   $('play').addEventListener('input', onInput);
   $('form').addEventListener('change', ev => {
     const el = ev.target, path = el.dataset.path;
+    if (path) plan.example = false;
+    if (el.hasAttribute('data-money')) { el.value = grouped(getPath(plan, path)); return; }
     if (el.tagName === 'SELECT' && path) {
       if (path === 'country') applyCountry(el.value); else setPath(plan, path, el.value);
       refresh();
@@ -635,22 +655,24 @@
   $('form').addEventListener('click', ev => {
     const t = ev.target.closest('button');
     if (!t) return;
+    if (!t.dataset.how && t.id !== 'reset') plan.example = false;
     const list = store.get(LS_SCENARIOS, []);
     if (t.dataset.single != null) { plan.single = t.dataset.single === '1'; refresh(); }
     else if (t.dataset.toggle) { setPath(plan, t.dataset.toggle, !getPath(plan, t.dataset.toggle)); refresh(); }
-    else if (t.id === 'showCountry') { showCountry = true; renderForm(); }
+    else if (t.dataset.how != null) { howOpen[+t.dataset.how] = !howOpen[+t.dataset.how]; if (last) renderExplain(last.plan, last.res); }
     else if (t.id === 'scenSave') {
       const name = $('scenName').value.trim() || 'Scenario ' + (list.length + 1);
       const at = list.findIndex(s => s.name === name), entry = { name, plan: clone(plan) };
       if (at >= 0) list[at] = entry; else list.push(entry);
       store.set(LS_SCENARIOS, list); $('scenName').value = ''; renderScenarios();
-    } else if (t.id === 'reset') { plan = defaultPlan(); fxMemo = {}; showCountry = false; refresh(); }
+    } else if (t.id === 'reset') { plan = defaultPlan(); fxMemo = {}; refresh(); }
     else if (t.dataset.load != null) { plan = hydrate(list[+t.dataset.load].plan); fxMemo = {}; refresh(); }
     else if (t.dataset.del != null) { list.splice(+t.dataset.del, 1); store.set(LS_SCENARIOS, list); renderScenarios(); }
   });
   $('answer').addEventListener('click', ev => {
     const t = ev.target.closest('button');
     if (!t) return;
+    plan.example = false;
     if (t.id === 'applySolve' && last && last.solved && last.solved.k != null) {
       plan.people.forEach(x => { x.stopAge = x.age + last.solved.k; });
       refresh();
@@ -658,9 +680,14 @@
   });
   $('currency').addEventListener('click', ev => {
     const c = ev.target.dataset.cur;
-    if (c) { setCurrency(c); refresh(); }
+    if (c) { plan.example = false; setCurrency(c); refresh(); }
   });
   $('yearCard').addEventListener('toggle', renderYearByYear);
+  $('example').addEventListener('click', ev => {
+    if (ev.target.id !== 'exampleGo') return;
+    const f = $('form').querySelector('input[data-path="people.0.age"]');
+    f.scrollIntoView({ behavior: 'smooth', block: 'center' }); f.focus({ preventScroll: true }); f.select();
+  });
 
   let resizeTimer = null;
   window.addEventListener('resize', () => {
