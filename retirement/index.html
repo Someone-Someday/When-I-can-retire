@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retirement planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css?v=4">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Retirement planner</h1>
+    <p class="sub" id="moneyNote"></p>
+  </div>
+  <div class="seg" id="currency" role="group" aria-label="Currency">
+    <button type="button" data-cur="RON">Lei</button>
+    <button type="button" data-cur="EUR">Euro</button>
+  </div>
+</header>
+
+<main class="layout">
+  <form class="inputs" id="form" autocomplete="off" onsubmit="return false"></form>
+
+  <section class="results">
+    <div class="card answer" id="answer" aria-live="polite">
+      <div class="headline" id="headline">Working it out…</div>
+      <div class="verdict" id="verdict"></div>
+      <ul class="steps" id="steps"></ul>
+      <p class="eyebrow">What if you…</p>
+      <div class="whatif" id="whatif"></div>
+    </div>
+
+    <div class="card" id="playCard">
+      <h2>Play with it</h2>
+      <div class="play" id="play"></div>
+    </div>
+
+    <div class="card">
+      <h2>Your timeline</h2>
+      <div id="timeline"></div>
+    </div>
+
+    <div class="card">
+      <h2>Your savings over time</h2>
+      <div class="legend" id="wealthLegend"></div>
+      <div class="chart" id="wealthChart"></div>
+      <ol class="milestones" id="wealthMilestones"></ol>
+    </div>
+
+    <details class="card" id="yearCard">
+      <summary><h2>See year by year</h2></summary>
+      <p class="note">What pays for each month once you have stopped working, if markets do about as expected.</p>
+      <div class="legend" id="incomeLegend"></div>
+      <div class="chart" id="incomeChart"></div>
+      <div class="tablewrap" id="table"></div>
+    </details>
+
+    <details class="card">
+      <summary><h2>How this is calculated</h2></summary>
+      <ul class="notes" id="notes"></ul>
+    </details>
+  </section>
+</main>
+
+<div class="tip" id="tip" hidden></div>
+<script src="engine.js?v=4"></script>
+<script src="app.js?v=4"></script>
+</body>
+</html>
