@@ -200,15 +200,19 @@
         '<button type="button" class="btn" id="scenSave">Save</button></div><ul class="scen" id="scenList"></ul>' +
       '<button type="button" class="btn link" id="reset">Reset everything to the example</button>';
 
+    // Country and currency come first: they decide the pension rules and the units of every amount below
+    const curs = offered();
     form.innerHTML =
-      '<div class="card" id="countryCard"><h2>Where you work</h2>' +
-        select('country', 'Your state pension comes from', Object.keys(E.COUNTRIES).map(code => [code, E.COUNTRIES[code].name])) +
-        '<p class="note">' + (ro ? 'Uses Romania\'s official pension formula.'
-          : c.mode === 'rate' ? 'Rough estimate for ' + esc(c.name) + ': the pension is a share of salary. Enter your exact pension below if you know it.'
-            : 'No formula for other countries: enter each exact pension below.') + '</p></div>' +
       '<div class="card"><div class="cardhead"><h2>About you</h2><div class="seg" id="who">' +
         '<button type="button" data-single="0" aria-pressed="' + !plan.single + '">The two of us</button>' +
         '<button type="button" data-single="1" aria-pressed="' + !!plan.single + '">Just me</button></div></div>' +
+        '<div class="where">' + select('country', 'Where you work', Object.keys(E.COUNTRIES).map(code => [code, E.COUNTRIES[code].name])) +
+          (curs.length > 1 ? '<div class="f"><span>Currency</span><div class="seg" id="currency" role="group" aria-label="Currency">' +
+            curs.map(code => '<button type="button" data-cur="' + code + '" aria-pressed="' + (code === plan.currency) + '">' + E.CURRENCIES[code].label + '</button>').join('') + '</div></div>' : '') +
+        '</div>' +
+        '<p class="note where-note">' + (ro ? 'Uses Romania\'s official pension formula.'
+          : c.mode === 'rate' ? 'Rough estimate for ' + esc(c.name) + ': the pension is a share of salary. Enter your exact pension below if you know it.'
+            : 'No formula for other countries: enter each exact pension below.') + '</p>' +
         about +
         '<div class="grid2 sep">' + field({ path: 'liquid', label: plan.single ? 'Your savings and investments' : 'Your savings and investments together', money: true, wide: true, hint: 'Bank savings, deposits, ETFs and funds. Not pensions.' }) + '</div>' +
       '</div>' +
@@ -221,9 +225,6 @@
     open.forEach(id => { if ($(id)) $(id).open = true; });
     renderScenarios();
     updateSliderLabels();
-    const curs = offered(), sw = $('currency');
-    sw.hidden = curs.length < 2;
-    sw.innerHTML = curs.map(code => '<button type="button" data-cur="' + code + '" aria-pressed="' + (code === plan.currency) + '">' + E.CURRENCIES[code].label + '</button>').join('');
     $('moneyNote').textContent = 'All amounts in today\'s ' + CUR().word + ', already adjusted for inflation.';
   }
 
@@ -674,7 +675,8 @@
     if (!t) return;
     if (!t.dataset.how && t.id !== 'reset') plan.example = false;
     const list = store.get(LS_SCENARIOS, []);
-    if (t.dataset.single != null) { plan.single = t.dataset.single === '1'; refresh(); }
+    if (t.dataset.cur) { setCurrency(t.dataset.cur); refresh(); }
+    else if (t.dataset.single != null) { plan.single = t.dataset.single === '1'; refresh(); }
     else if (t.dataset.toggle) { setPath(plan, t.dataset.toggle, !getPath(plan, t.dataset.toggle)); refresh(); }
     else if (t.dataset.how != null) { howOpen[+t.dataset.how] = !howOpen[+t.dataset.how]; if (last) renderExplain(last.plan, last.res); }
     else if (t.id === 'scenSave') {
@@ -694,10 +696,6 @@
       plan.people.forEach(x => { x.stopAge = x.age + last.solved.k; });
       refresh();
     } else if (t.dataset.whatif != null) { whatIfs()[+t.dataset.whatif].apply(plan); refresh(); }
-  });
-  $('currency').addEventListener('click', ev => {
-    const c = ev.target.dataset.cur;
-    if (c) { plan.example = false; setCurrency(c); refresh(); }
   });
   $('yearCard').addEventListener('toggle', renderYearByYear);
   $('example').addEventListener('click', ev => {

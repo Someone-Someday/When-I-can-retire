@@ -72,8 +72,11 @@ details.card .people + .note { margin: 10px 0 0; }
 .explain b { color: var(--ink); font-weight: 600; }
 .explain .btn.link { font-size: 12px; }
 .explain .how { display: block; margin-top: 6px; }
-#countryCard h2 { margin-bottom: 10px; }
-#countryCard .note { margin-top: 8px; }
+/* Country and currency row at the top of About you */
+.where { display: flex; gap: 12px; align-items: end; }
+.where > .f.wide { flex: 1; }
+.where .seg { align-self: start; }
+.where-note { margin: 6px 0 14px !important; padding-bottom: 14px; border-bottom: 1px solid var(--grid); }
 details.card > summary .sumnote { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
 .cardhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 .cardhead h2 { margin: 0; }
@@ -209,7 +212,6 @@ td.short { color: var(--critical); font-weight: 600; }
   #playCard { order: 2; }
   .inputs { display: contents; }
   .inputs > * { order: 3; min-width: 0; }
-  .inputs > #countryCard { order: 0; }
   details.card > summary .sumnote { display: none; }
   .headline { font-size: 24px; }
 }
