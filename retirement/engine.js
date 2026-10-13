@@ -30,9 +30,16 @@
     ES: { name: 'Spain', mode: 'rate', currency: 'EUR', pensionAge: 67, fullCareer: 37, replacementPct: 80, pillar2Pct: 0, pillar3: 'Plan de Pensiones', pillar3Unlock: 67 },
     IT: { name: 'Italy', mode: 'rate', currency: 'EUR', pensionAge: 67, fullCareer: 43, replacementPct: 76, pillar2Pct: 0, pillar3: 'Fondo pensione', pillar3Unlock: 67 },
     NL: { name: 'Netherlands', mode: 'rate', currency: 'EUR', pensionAge: 67, fullCareer: 40, replacementPct: 75, pillar2Pct: 0, pillar3: 'Lijfrente', pillar3Unlock: 67 },
-    PL: { name: 'Poland', mode: 'rate', currency: 'EUR', pensionAge: 65, fullCareer: 40, replacementPct: 29, pillar2Pct: 0, pillar3: 'IKE/IKZE', pillar3Unlock: 60 },
+    PL: { name: 'Poland', mode: 'rate', currency: 'PLN', pensionAge: 65, fullCareer: 40, replacementPct: 29, pillar2Pct: 0, pillar3: 'IKE/IKZE', pillar3Unlock: 60 },
     PT: { name: 'Portugal', mode: 'rate', currency: 'EUR', pensionAge: 67, fullCareer: 40, replacementPct: 74, pillar2Pct: 0, pillar3: 'PPR', pillar3Unlock: 60 },
     MANUAL: { name: 'Other (enter my pension)', mode: 'manual', currency: 'EUR', pensionAge: 67, fullCareer: 40, replacementPct: 0, pillar2Pct: 0, pillar3: 'Pillar III', pillar3Unlock: 60 }
+  };
+
+  // Display currencies. fx is the default number of units per euro, editable in the UI.
+  const CURRENCIES = {
+    EUR: { label: 'Euro', unit: '€', word: 'euros', prefix: true, fx: 1 },
+    RON: { label: 'Lei', unit: 'lei', word: 'lei', prefix: false, fx: 5.1 },
+    PLN: { label: 'Złoty', unit: 'zł', word: 'złoty', prefix: false, fx: 4.25 }
   };
 
   const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
@@ -419,7 +426,7 @@
   }
 
   const api = {
-    RO, COUNTRIES, roStabilityPoints, roNetPension, roEarlyPenalty, roContribution, roPension,
+    RO, COUNTRIES, CURRENCIES, roStabilityPoints, roNetPension, roEarlyPenalty, roContribution, roPension,
     statePension, simulate, solveEarliest, mulberry32
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

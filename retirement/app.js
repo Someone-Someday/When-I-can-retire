@@ -29,7 +29,7 @@
   }
   function defaultPlan() {
     return {
-      example: true, country: 'RO', currency: 'RON', single: false, fx: 5.1, endAge: 95, runs: 1000,
+      example: true, country: 'RO', currency: 'RON', single: false, fxRates: { RON: 5.1, PLN: 4.25 }, endAge: 95, runs: 1000,
       people: [defaultPerson('You', 35, 12000, 55, 12, 60000, 10000), defaultPerson('Partner', 33, 9000, 53, 10, 40000, 0)],
       liquid: 300000, savings: 4000,
       spending: { monthly: 9000, otherIncome: 0, slowAfter75Pct: 15, flexible: false, flexCutPct: 10 },
@@ -53,6 +53,8 @@
   function hydrate(saved) {
     if (saved && saved.example === undefined) saved.example = false;
     if (saved && !saved.currency) saved.currency = !saved.country || saved.country === 'RO' ? 'RON' : 'EUR';
+    // Before per-currency rates, one lei-per-euro rate was stored as fx
+    if (saved && saved.fx && !saved.fxRates) saved.fxRates = { RON: saved.fx };
     return withDefaults(saved, defaultPlan());
   }
 
@@ -68,11 +70,20 @@
   const MONEY = ['liquid', 'savings', 'spending.monthly', 'spending.otherIncome'].concat(
     [0, 1].flatMap(i => ['salary', 'pfaIncome', 'casCustom', 'volBase', 'pensionOverride', 'p2Balance', 'p3Balance', 'p3Contribution'].map(k => 'people.' + i + '.' + k)));
 
-  const isRon = () => plan.currency === 'RON';
-  const cur = () => (isRon() ? 'lei' : '€');
+  // The country decides which currencies are offered: its own and the euro
+  const localCur = () => (E.COUNTRIES[plan.country] || E.COUNTRIES.MANUAL).currency;
+  const offered = () => (localCur() === 'EUR' ? ['EUR'] : [localCur(), 'EUR']);
+  const CUR = () => E.CURRENCIES[plan.currency] || E.CURRENCIES.EUR;
+  const perEur = code => (code === 'EUR' ? 1 : (plan.fxRates && plan.fxRates[code] > 0 ? plan.fxRates[code] : E.CURRENCIES[code].fx));
+  const cur = () => CUR().unit;
   const fmt = n => {
-    const s = Math.round(n).toLocaleString('en-US');
-    return isRon() ? s + ' lei' : '€' + s;
+    const s = Math.round(n).toLocaleString('en-US'), c = CUR();
+    return c.prefix ? c.unit + s : s + ' ' + c.unit;
+  };
+  // Nearest 1, 2 or 5 times a power of ten, so steps read as round amounts in any currency
+  const roundNice = x => {
+    const m = Math.pow(10, Math.floor(Math.log10(x))), f = x / m;
+    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * m;
   };
   const grouped = n => (typeof n === 'number' && isFinite(n) ? Math.round(n).toLocaleString('en-US') : '');
   const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
@@ -124,7 +135,7 @@
     const c = country(), ro = c.mode === 'ro', form = $('form'), p2 = ro ? 'Pilon II' : 'a Pillar II pot';
     const open = Array.from(form.querySelectorAll('details[open]')).map(d => d.id);
     const moneyMax = (v, base) => Math.max(base, Math.ceil((v || 0) * 1.5 / 1000) * 1000);
-    const k = isRon() ? 1 : 0.2;
+    const k = perEur(plan.currency) / 5;  // slider ranges are set in lei and scaled to the shown currency
 
     const about = personColumns((p, x, i) => {
       const type = ro ? x.earnType : 'employee';
@@ -183,7 +194,7 @@
         field({ path: 'market.taxDragPct', label: 'Tax on gains', unit: '%/yr', step: 0.05 }) +
         field({ path: 'market.pensionFundFeePct', label: 'Pension fund fees', unit: '%/yr', step: 0.05 }) +
         field({ path: 'runs', label: 'Futures simulated', unit: 'runs', step: 100 }) +
-        field({ path: 'fx', label: 'Exchange rate', unit: 'lei per €', step: 0.01 }) +
+        (localCur() !== 'EUR' ? field({ path: 'fxRates.' + localCur(), label: 'Exchange rate', unit: E.CURRENCIES[localCur()].unit + ' per €', step: 0.01 }) : '') +
       '</div>' +
       '<h3>Saved scenarios</h3><div class="row"><span class="inp"><input type="text" id="scenName" placeholder="Scenario name"></span>' +
         '<button type="button" class="btn" id="scenSave">Save</button></div><ul class="scen" id="scenList"></ul>' +
@@ -205,13 +216,15 @@
     // Sliders sit next to the answer so it can be watched while dragging
     $('play').innerHTML =
       Array.from({ length: count() }, (_, i) => slider('people.' + i + '.stopAge', (plan.people[i].name === 'You' ? 'You stop' : esc(plan.people[i].name || 'Person ' + (i + 1)) + ' stops') + ' working at', Math.min(74, plan.people[i].age), 75, 1)).join('') +
-      slider('savings', count() > 1 ? 'You save together' : 'You save', 0, moneyMax(plan.savings, 15000 * k), 100 * k) +
-      slider('spending.monthly', 'You spend in retirement', 1000 * k, moneyMax(plan.spending.monthly, 30000 * k), 100 * k);
+      slider('savings', count() > 1 ? 'You save together' : 'You save', 0, moneyMax(plan.savings, 15000 * k), roundNice(100 * k)) +
+      slider('spending.monthly', 'You spend in retirement', roundNice(1000 * k), moneyMax(plan.spending.monthly, 30000 * k), roundNice(100 * k));
     open.forEach(id => { if ($(id)) $(id).open = true; });
     renderScenarios();
     updateSliderLabels();
-    document.querySelectorAll('#currency button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cur === plan.currency)));
-    $('moneyNote').textContent = 'All amounts in today\'s ' + (isRon() ? 'lei' : 'euros') + ', already adjusted for inflation.';
+    const curs = offered(), sw = $('currency');
+    sw.hidden = curs.length < 2;
+    sw.innerHTML = curs.map(code => '<button type="button" data-cur="' + code + '" aria-pressed="' + (code === plan.currency) + '">' + E.CURRENCIES[code].label + '</button>').join('');
+    $('moneyNote').textContent = 'All amounts in today\'s ' + CUR().word + ', already adjusted for inflation.';
   }
 
   function renderScenarios() {
@@ -221,21 +234,22 @@
       '<button type="button" class="btn" data-del="' + i + '" aria-label="Delete ' + esc(s.name) + '">Delete</button></li>').join('');
   }
 
-  // Converts every amount at the plan's exchange rate, to whole units. Each conversion is remembered,
-  // so switching back restores the exact original figure unless that amount was edited in between.
+  // Converts every amount at the plan's exchange rates, to whole units. Each amount remembers its figure
+  // in every currency it has been shown in, so going back restores it exactly unless it was edited since.
   let fxMemo = {};
   function setCurrency(to) {
     if (to === plan.currency) return;
-    const from = plan.currency, fx = plan.fx > 0 ? plan.fx : 5.1, k = to === 'EUR' ? 1 / fx : fx, memo = {};
+    const from = plan.currency, k = perEur(to) / perEur(from);
     MONEY.forEach(path => {
       const v = getPath(plan, path);
-      if (typeof v !== 'number') return;
-      const was = fxMemo[path];
-      const next = was && was.cur === to && was.as === v ? was.v : Math.round(v * k);
-      memo[path] = { cur: from, v, as: next };
+      if (typeof v !== 'number') { delete fxMemo[path]; return; }
+      const m = fxMemo[path] && fxMemo[path].as === v ? fxMemo[path] : { values: {} };
+      m.values[from] = v;
+      const next = to in m.values ? m.values[to] : Math.round(v * k);
+      m.values[to] = next; m.as = next;
+      fxMemo[path] = m;
       setPath(plan, path, next);
     });
-    fxMemo = memo;
     plan.currency = to;
   }
 
@@ -246,15 +260,18 @@
     plan.pension.fullCareer = c.fullCareer;
     plan.pension.pillar2Pct = c.pillar2Pct;
     plan.people.forEach(p => { p.claimAge = c.pensionAge; p.p3UnlockAge = c.pillar3Unlock; });
-    setCurrency(code === 'RO' ? 'RON' : 'EUR');
+    setCurrency(c.currency);
   }
 
   // Engine input: numbers forced into sane ranges so half-typed values cannot break a run
   function cleanPlan(raw) {
     const p = clone(raw), c = E.COUNTRIES[p.country] || E.COUNTRIES.MANUAL;
     const n = (v, d, lo, hi) => Math.min(hi, Math.max(lo, typeof v === 'number' && isFinite(v) ? v : d));
-    p.currency = p.currency === 'EUR' ? 'EUR' : 'RON';
-    p.fx = n(p.fx, 5.1, 0.1, 1000);
+    const local = c.currency;
+    if (p.currency !== 'EUR' && p.currency !== local) p.currency = local;
+    p.fxRates = p.fxRates || {};
+    Object.keys(E.CURRENCIES).forEach(code => { if (code !== 'EUR') p.fxRates[code] = n(p.fxRates[code], E.CURRENCIES[code].fx, 0.1, 1000); });
+    p.fx = p.fxRates.RON;  // the engine converts Romanian rules from lei
     p.people = p.single ? [p.people[0]] : p.people;
     p.savings = n(p.savings, 0, 0, 1e9);
     p.people.forEach(x => {
@@ -300,7 +317,7 @@
 
   // The three what-if moves, as edits to the raw plan
   function whatIfs() {
-    const step = isRon() ? 500 : 100;
+    const step = roundNice(100 * perEur(plan.currency));
     return [
       { label: 'Save ' + fmt(step) + ' more', apply: q => { q.savings = (q.savings || 0) + step; } },
       { label: 'Stop 3 years later', apply: q => q.people.forEach(x => { x.stopAge = Math.min(75, Math.max(x.stopAge, x.age) + 3); }) },
@@ -505,7 +522,7 @@
     { key: 'other', label: 'Other income', color: 'var(--s2)' },
     { key: 'fromLiquid', label: 'Savings and investments', color: 'var(--s3)' },
     { key: 'fromP3', label: country().pillar3, color: 'var(--s4)' },
-    { key: 'fromP2', label: isRon() ? 'Pilon II' : 'Pillar II', color: 'var(--s5)' },
+    { key: 'fromP2', label: country().mode === 'ro' ? 'Pilon II' : 'Pillar II', color: 'var(--s5)' },
     { key: 'shortfall', label: 'Not covered', color: 'var(--critical)' }
   ];
 

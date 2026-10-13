@@ -95,6 +95,7 @@ details.card > summary .sumnote { margin-left: auto; color: var(--muted); font-s
   details.card > summary:hover h2 { color: var(--accent); }
 }
 /* Segmented control with a sliding thumb */
+.seg[hidden] { display: none; }
 .seg { position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; padding: 2px; background: var(--hover); border: 1px solid var(--border); border-radius: 8px; }
 .seg::before { content: ""; position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 6px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); transition: transform var(--base) var(--ease-out); }
 .seg:has(button:last-child[aria-pressed="true"])::before { transform: translateX(100%); }
