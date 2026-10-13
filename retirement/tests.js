@@ -375,6 +375,46 @@
     ok(fee > 0 && tax > 0, 'fees and taxes recorded');
   });
 
+  /* --- Quiz answers to plan --- */
+  const Q = window.RetQuiz;
+  const quizBase = () => Object.assign(basePlan(), { fxRates: { RON: 5.1, PLN: 4.25 }, spending: Object.assign(basePlan().spending, { cushionYears: 0 }), accounts: [], savingsTo: null, savings: 4000 });
+  test('quiz: "Yes" path builds accounts with amounts, mix, fee and savings target', () => {
+    const p = Q.applyQuiz(quizBase(), {
+      invest: 'yes', where: ['deposit', 'broker_foreign', 'p3', 'property'],
+      amounts: { deposit: { chip: 2 }, broker_foreign: { exact: 120000 }, p3: { chip: 0 }, property: { exact: 1500 } },
+      savings: 3000, inside: 'index', fee: 'low', risk: { crash: '2', when: '2', sleep: '1' }, savingsTo: 'broker_foreign', flexible: 'yes', cushion: 'yes'
+    });
+    ok(p.accounts.length === 2, 'deposit + broker, got ' + p.accounts.length);
+    near(p.accounts[0].balance, 100000); near(p.accounts[0].taxPct, 10);
+    near(p.accounts[1].balance, 120000); near(p.accounts[1].stockPct, 100); near(p.accounts[1].feePct, 0.2); near(p.accounts[1].taxPct, 16);
+    ok(p.savingsTo === 1 && p.savings === 3000, 'savings go to the foreign broker');
+    ok(p.people[0].hasP3 && p.people[0].p3Balance === 5000, 'Pilon III from the chip');
+    near(p.spending.otherIncome, 1500); ok(p.spending.flexible && p.spending.cushionYears === 2);
+    near(p.liquid, 220000); ok(p.quiz.invest === 'yes' && p.example === false);
+  });
+  test('quiz: "Not yet" skips the money questions and opens an index fund with the risk mix', () => {
+    const a = { invest: 'no', where: ['deposit'], risk: { crash: '0', when: '0', sleep: '1' } };
+    ok(Q.visible(a).every(q => ['where', 'amounts', 'inside', 'fee'].indexOf(q.id) < 0), 'steps 2, 3, 5, 6 hidden');
+    const p = Q.applyQuiz(quizBase(), a);
+    ok(p.accounts.length === 1 && p.accounts[0].type === 'broker_ro' && p.accounts[0].balance === 0, 'one empty index fund');
+    near(p.accounts[0].stockPct, 30); ok(p.savingsTo === 0 && p.savings === 4000);
+  });
+  test('quiz: risk scores map to Safe, Balanced and Growth; not sure is Balanced', () => {
+    ok(Q.riskProfile({ risk: { crash: '0', when: '1', sleep: '1' } }).stockPct === 30);
+    ok(Q.riskProfile({ risk: { crash: '1', when: '1', sleep: '2' } }).stockPct === 60);
+    ok(Q.riskProfile({ risk: { crash: '2', when: '2', sleep: '1' } }).stockPct === 90);
+    ok(Q.riskProfile({ risk: 'unsure' }).name === 'Balanced');
+  });
+  test('quiz: ranges scale to euros and other countries hide Pilon III and Fidelis', () => {
+    const eur = Object.assign(quizBase(), { currency: 'EUR' });
+    ok(Q.ranges(eur)[1].label === '€2k–10k', Q.ranges(eur)[1].label); near(Q.ranges(eur)[2].mid, 20000);
+    ok(Q.ranges(quizBase())[1].label === '10k–50k lei', Q.ranges(quizBase())[1].label);
+    const de = Object.assign(quizBase(), { country: 'DE', currency: 'EUR' });
+    const keys = Q.places(de).map(o => o.v);
+    ok(keys.indexOf('p3') < 0 && keys.indexOf('govbond') < 0, 'hidden outside Romania');
+    near(Q.applyQuiz(de, { invest: 'yes', where: ['broker_ro'] }).accounts[0].taxPct, 0);
+  });
+
   /* --- Solver --- */
   test('solver returns the first year that reaches the target', () => {
     const p = basePlan();

@@ -72,6 +72,13 @@
     return nominal > 0 ? r - nominal * (taxPct / 100) / (1 + inf) : r;
   }
 
+  // Nearest 1, 2 or 5 times a power of ten, so steps read as round amounts in any currency
+  const roundNice = x => {
+    if (!(x > 0)) return 0;
+    const m = Math.pow(10, Math.floor(Math.log10(x))), f = x / m;
+    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * m;
+  };
+
   const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
 
   /* ---------- Romanian state pension ---------- */
@@ -554,7 +561,7 @@
   }
 
   const api = {
-    RO, COUNTRIES, CURRENCIES, ACCOUNT_TYPES, accountLabel, accountDefaults, afterTaxReal, roStabilityPoints, roNetPension, roEarlyPenalty, roContribution, roPension,
+    RO, COUNTRIES, CURRENCIES, ACCOUNT_TYPES, accountLabel, accountDefaults, afterTaxReal, roundNice, roStabilityPoints, roNetPension, roEarlyPenalty, roContribution, roPension,
     statePension, simulate, solveEarliest, mulberry32
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
