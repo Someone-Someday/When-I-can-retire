@@ -85,11 +85,7 @@
     const s = Math.round(n).toLocaleString('en-US'), c = CUR();
     return c.prefix ? c.unit + s : s + ' ' + c.unit;
   };
-  // Nearest 1, 2 or 5 times a power of ten, so steps read as round amounts in any currency
-  const roundNice = x => {
-    const m = Math.pow(10, Math.floor(Math.log10(x))), f = x / m;
-    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * m;
-  };
+  const roundNice = E.roundNice;
   const grouped = n => (typeof n === 'number' && isFinite(n) ? Math.round(n).toLocaleString('en-US') : '');
   const compact = n => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
   const country = () => E.COUNTRIES[plan.country] || E.COUNTRIES.MANUAL;
@@ -188,15 +184,19 @@
         field({ path: 'spending.flexCutPct', label: 'Cut by', unit: '%' }) +
         field({ path: 'endAge', label: 'Plan until age', unit: 'yrs' }) +
       '</div>' +
-      '<h3>Investments</h3><div class="grid2">' +
-        field({ path: 'market.stockPct', label: 'Stocks in your savings', unit: '%' }) +
+      '<h3>Investments</h3>' + accountEditor() + '<div class="grid2 gap">' +
+        (hasAccounts() ? '' : field({ path: 'market.stockPct', label: 'Stocks in your savings', unit: '%' })) +
         field({ path: 'market.pensionFundStockPct', label: 'Stocks in pension funds', unit: '%' }) +
         field({ path: 'market.stockReturn', label: 'Stock growth above inflation', unit: '%/yr', step: 0.1 }) +
         field({ path: 'market.bondReturn', label: 'Bond growth above inflation', unit: '%/yr', step: 0.1 }) +
         field({ path: 'market.stockVol', label: 'Stock ups and downs', unit: '%', step: 0.5 }) +
         field({ path: 'market.bondVol', label: 'Bond ups and downs', unit: '%', step: 0.5 }) +
-        field({ path: 'market.feePct', label: 'Fund fees', unit: '%/yr', step: 0.05 }) +
-        field({ path: 'market.taxDragPct', label: 'Tax on gains', unit: '%/yr', step: 0.05 }) +
+        (hasAccounts() ? '' : field({ path: 'market.feePct', label: 'Fund fees', unit: '%/yr', step: 0.05 }) +
+          field({ path: 'market.taxDragPct', label: 'Tax on gains', unit: '%/yr', step: 0.05 })) +
+        field({ path: 'market.inflation', label: 'Inflation', unit: '%/yr', step: 0.1 }) +
+        field({ path: 'market.depositReal', label: 'Deposit return above inflation', unit: '%/yr', step: 0.1, hint: 'Before tax' }) +
+        field({ path: 'market.govReal', label: (ro ? 'Fidelis / Tezaur' : 'Government bonds') + ' above inflation', unit: '%/yr', step: 0.1 }) +
+        field({ path: 'spending.cushionYears', label: 'Cash cushion', unit: 'yrs of spending', hint: 'Kept safe in cash, deposits or bonds' }) +
         field({ path: 'market.pensionFundFeePct', label: 'Pension fund fees', unit: '%/yr', step: 0.05 }) +
         field({ path: 'runs', label: 'Futures simulated', unit: 'runs', step: 100 }) +
         (localCur() !== 'EUR' ? field({ path: 'fxRates.' + localCur(), label: 'Exchange rate', unit: E.CURRENCIES[localCur()].unit + ' per €', step: 0.01 }) : '') +
@@ -219,7 +219,7 @@
           : c.mode === 'rate' ? 'Rough estimate for ' + esc(c.name) + ': the pension is a share of salary. Enter your exact pension below if you know it.'
             : 'No formula for other countries: enter each exact pension below.') + '</p>' +
         about +
-        '<div class="grid2 sep">' + field({ path: 'liquid', label: plan.single ? 'Your savings and investments' : 'Your savings and investments together', money: true, wide: true, hint: 'Bank savings, deposits, ETFs and funds. Not pensions.' }) + '</div>' +
+        moneyBlock() +
       '</div>' +
       '<details class="card" id="adjust"><summary><h2>More settings</h2><span class="sumnote">Pension age, fees, returns, scenarios</span></summary>' + details + '</details>';
     // Sliders sit next to the answer so it can be watched while dragging
@@ -231,6 +231,51 @@
     renderScenarios();
     updateSliderLabels();
     $('moneyNote').textContent = 'All amounts in today\'s ' + CUR().word + ', already adjusted for inflation.';
+  }
+
+  /* ---------- Accounts ---------- */
+
+  const hasAccounts = () => Array.isArray(plan.accounts) && plan.accounts.length > 0;
+  const accTotal = () => (plan.accounts || []).reduce((s, a) => s + (a.balance || 0), 0);
+  const accName = type => E.accountLabel(type, plan.country);
+  let confirmTotal = false;
+
+  // About you: one total, or the list of accounts the quiz (or the editor) filled in
+  function moneyBlock() {
+    const both = plan.single ? 'Your savings and investments' : 'Your savings and investments together';
+    if (!hasAccounts()) {
+      return '<div class="grid2 sep">' + field({ path: 'liquid', label: both, money: true, wide: true, hint: 'Bank savings, deposits, ETFs and funds. Not pensions.' }) +
+        '<button type="button" class="btn primary wide" data-quiz>Where is your money? 2-minute quiz</button></div>';
+    }
+    const items = plan.accounts.map(a => '<li><span>' + esc(accName(a.type)) + '</span><b>' + fmt(a.balance || 0) + '</b></li>').join('');
+    return '<div class="sep accsum"><div class="f"><span>' + both + '</span></div><ul class="acclist">' + items +
+      '<li class="tot"><span>Total</span><b>' + fmt(accTotal()) + '</b></li></ul>' +
+      (confirmTotal
+        ? '<div class="confirm" role="alert"><p>Replace your ' + plan.accounts.length + (plan.accounts.length === 1 ? ' account' : ' accounts') + ' with one total of ' + fmt(accTotal()) + '? Their own fees and taxes will no longer be used.</p>' +
+          '<div class="row"><button type="button" class="btn primary" id="useTotalYes">Use one total</button><button type="button" class="btn" id="useTotalNo">Cancel</button></div></div>'
+        : '<div class="row links"><button type="button" class="btn link" data-quiz>Edit answers</button><button type="button" class="btn link" id="useTotal">Use one total instead</button></div>') +
+      '</div>';
+  }
+
+  // More settings: one row per account
+  function accountEditor() {
+    const types = Object.keys(E.ACCOUNT_TYPES);
+    const rows = (plan.accounts || []).map((a, i) => {
+      const kind = E.ACCOUNT_TYPES[a.type].kind, p = 'accounts.' + i + '.';
+      return '<div class="acct"><label class="f wide"><span>Account ' + (i + 1) + '</span><span class="inp"><select data-acc-type="' + i + '" aria-label="Account ' + (i + 1) + ' type">' +
+          types.map(t => '<option value="' + t + '"' + (t === a.type ? ' selected' : '') + '>' + esc(accName(t)) + '</option>').join('') + '</select></span></label>' +
+        '<button type="button" class="btn del" data-acc-del="' + i + '" aria-label="Delete account ' + (i + 1) + '">Delete</button>' +
+        field({ path: p + 'balance', label: 'Balance', money: true, wide: true }) +
+        (kind === 'invest' || kind === 'generic' ? field({ path: p + 'stockPct', label: 'Stocks', unit: '%' }) : '<span></span>') +
+        field({ path: p + 'feePct', label: 'Fee', unit: '%/yr', step: 0.05 }) +
+        (kind === 'generic' ? '<span></span>' : field({ path: p + 'taxPct', label: 'Tax on gains', unit: '%', step: 0.5 })) + '</div>';
+    }).join('');
+    const to = plan.savingsTo == null ? -1 : plan.savingsTo;
+    const dest = hasAccounts() ? '<label class="f wide"><span>New savings go to</span><span class="inp"><select data-savings-to>' +
+      '<option value=""' + (to < 0 ? ' selected' : '') + '>Automatic (first investment account)</option>' +
+      plan.accounts.map((a, i) => '<option value="' + i + '"' + (i === to ? ' selected' : '') + '>' + (i + 1) + '. ' + esc(accName(a.type)) + '</option>').join('') + '</select></span></label>' : '';
+    return (rows ? '<div class="accts">' + rows + '</div>' : '<p class="note">All savings are one pot. Add accounts to give each its own fees and tax.</p>') +
+      '<div class="row gap"><button type="button" class="btn" data-acc-add>Add account</button></div>' + (dest ? '<div class="gap">' + dest + '</div>' : '');
   }
 
   function renderScenarios() {
@@ -445,6 +490,7 @@
       return '<button type="button" class="btn chip" data-whatif="' + i + '">' + w.label + ' <span>→ ' + verdict(chance(cleanPlan(raw))).text + '</span></button>';
     }).join('');
     $('answer').classList.remove('stale');
+    renderMoney($('money'), p, res, { heavy: true });
     $('example').hidden = !plan.example;
   }
 
@@ -457,6 +503,97 @@
     const ticks = [];
     for (let v = 0; v < max + step * 0.999; v += step) ticks.push(v);
     return ticks;
+  }
+
+  /* ---------- Your money ---------- */
+
+  const GROUPS = [
+    { key: 'invest', label: 'Investments', color: 'var(--s1)' },
+    { key: 'pots', label: 'Pension pots', color: 'var(--s2)' },
+    { key: 'govbond', label: 'Government bonds', color: 'var(--s3)' },
+    { key: 'cash', label: 'Cash and deposits', color: 'var(--s4)' }
+  ];
+  const groupOf = type => { const k = E.ACCOUNT_TYPES[type].kind; return k === 'invest' || k === 'generic' ? 'invest' : k === 'govbond' ? 'govbond' : 'cash'; };
+  const pct1 = v => (Math.round(v * 10) / 10).toLocaleString('en-US') + '%';
+  // Real yearly return of a safe account after its fee and tax
+  function safeRate(p, a) {
+    const k = E.ACCOUNT_TYPES[a.type].kind, m = p.market;
+    const real = k === 'deposit' ? m.depositReal : k === 'govbond' ? m.govReal : k === 'cash' ? (1 / (1 + m.inflation / 100) - 1) * 100 : null;
+    return real == null ? null : E.afterTaxReal(real - (a.feePct || 0), a.taxPct || 0, m.inflation);
+  }
+  const feeCache = {};
+  // Years sooner with cheap fees: two solver runs, so only from the deferred pass and cached per plan
+  function feeEffect(p) {
+    const key = JSON.stringify([p.accounts, p.savings, p.spending, p.market, p.people.map(x => [x.age, x.salary, x.p2Balance, x.p3Balance, x.earnType, x.pensionOverride])]);
+    if (key in feeCache) return feeCache[key];
+    const cheap = clone(p);
+    cheap.accounts.forEach(a => { if (E.ACCOUNT_TYPES[a.type].kind === 'invest' && a.feePct > 0.5) a.feePct = 0.2; });
+    const a = E.solveEarliest(p, TARGET, { runs: 300 }).k, b = E.solveEarliest(cheap, TARGET, { runs: 300 }).k;
+    return (feeCache[key] = a == null ? (b == null ? 0 : 1) : b == null ? 0 : a - b);
+  }
+
+  // Ring of where the money sits, what fees and taxes take, and a few plain facts
+  function renderMoney(host, p, res, opts) {
+    opts = opts || {};
+    if (!p.accounts || !p.accounts.length) {
+      host.innerHTML = '<div class="moneyempty"><p>See what fees and taxes cost you.</p><button type="button" class="btn primary" data-quiz>Take the 2-minute quiz</button></div>';
+      return;
+    }
+    const sums = { invest: 0, pots: 0, govbond: 0, cash: 0 };
+    p.accounts.forEach(a => { sums[groupOf(a.type)] += a.balance; });
+    p.people.forEach(x => { sums.pots += (x.p2Balance || 0) + (x.p3Balance || 0); });
+    const total = GROUPS.reduce((s, g) => s + sums[g.key], 0);
+    const parts = GROUPS.filter(g => sums[g.key] > 0);
+
+    // Ring: one arc per group, a 2px surface gap between them
+    const R = 52, C = 2 * Math.PI * R, gap = parts.length > 1 ? 2 : 0;
+    let at = 0, arcs = '';
+    parts.forEach((g, i) => {
+      const len = sums[g.key] / total * C;
+      arcs += '<circle class="arc" data-i="' + i + '" r="' + R + '" cx="70" cy="70" fill="none" stroke="' + g.color + '" stroke-width="20"' +
+        ' stroke-dasharray="' + Math.max(0.5, len - gap).toFixed(2) + ' ' + C.toFixed(2) + '" stroke-dashoffset="' + (-at).toFixed(2) + '"/>';
+      at += len;
+    });
+    const ring = '<svg class="ring" viewBox="0 0 140 140" role="img" aria-label="Where your money is: ' +
+      esc(parts.map(g => g.label + ' ' + Math.round(sums[g.key] / total * 100) + '%').join(', ')) + '"><g transform="rotate(-90 70 70)">' + arcs + '</g>' +
+      '<text x="70" y="66" text-anchor="middle" class="rt">Total</text><text x="70" y="84" text-anchor="middle" class="rv">' + esc(compact(total)) + '</text></svg>';
+    const legend = '<ul class="ringlegend">' + parts.map(g => '<li><i class="key" style="background:' + g.color + '"></i><span>' + g.label + '</span><b>' + fmt(sums[g.key]) +
+      '</b><em>' + Math.round(sums[g.key] / total * 100) + '%</em></li>').join('') + '</ul>';
+
+    // Sums along the typical path, up to the year everyone has stopped
+    const stop = Math.max(0, Math.max.apply(null, p.people.map(x => x.stopAge - x.age)));
+    const until = stop > 0 ? stop : res.T, rows = res.rows.slice(0, until);
+    const put = rows.length ? rows[0].liquid + rows.reduce((s, r) => s + r.addedLiquid, 0) : 0;
+    const add = k => rows.reduce((s, r) => s + r[k], 0);
+    const fees = add('feePaid'), taxes = add('taxPaid');
+    const nums = [['You put in', put], ['Growth added', add('growth')], ['Fees took', fees], ['Taxes took', taxes]];
+    const when = stop > 0 ? 'By ' + (startYear + stop) + ', when you stop working' : 'Over the whole plan';
+
+    // Facts, never advice
+    const facts = [], liquid = p.accounts.reduce((s, a) => s + a.balance, 0);
+    let worst = null;
+    p.accounts.forEach(a => { const r = safeRate(p, a); if (r != null && r < 0 && a.balance > 0 && (!worst || a.balance * r < worst.loss)) worst = { a, loss: a.balance * r }; });
+    if (worst) facts.push('Your ' + esc(accName(worst.a.type).replace(/^[A-Z]/, c => c.toLowerCase())) + ' grows slower than prices: about −' + fmt(-worst.loss) + ' a year in today\'s money.');
+    const dear = p.accounts.filter(a => E.ACCOUNT_TYPES[a.type].kind === 'invest' && a.feePct > 0.5);
+    if (dear.length && opts.heavy) {
+      const yrs = feeEffect(p), top = Math.max.apply(null, dear.map(a => a.feePct));
+      facts.push(yrs >= 1 ? 'With fees around 0.2% instead of ' + pct1(top) + ', you could stop ' + yrs + (yrs === 1 ? ' year' : ' years') + ' earlier.'
+        : 'Fees take about ' + fmt(fees) + ' before you stop working.');
+    } else if (!dear.length && fees >= 1) facts.push('Fees take about ' + fmt(fees) + ' before you stop working.');
+    if (p.accounts.some(a => a.type === 'broker_foreign') && p.country === 'RO') {
+      facts.push('Gains at a foreign broker are taxed 16% and declared by you in the Declarația unică; at a Romanian broker 3% (held over a year) or 6% (under a year), withheld for you.');
+    }
+    const cashy = p.accounts.filter(a => groupOf(a.type) === 'cash').reduce((s, a) => s + a.balance, 0);
+    if (liquid > 0 && cashy / liquid > 0.5) facts.push('More than half of your savings is in cash and deposits.');
+
+    host.innerHTML = '<div class="moneytop">' + ring + legend + '</div>' +
+      '<p class="eyebrow">' + when + '</p><div class="stats">' + nums.map(n => '<div><span>' + n[0] + '</span><b>' + fmt(n[1]) + '</b></div>').join('') + '</div>' +
+      (facts.length ? '<ul class="facts">' + facts.slice(0, 3).map(f => '<li>' + f + '</li>').join('') + '</ul>' : '');
+    host.querySelectorAll('.arc').forEach(el => {
+      const g = parts[+el.dataset.i];
+      el.addEventListener('pointermove', ev => showTip('<b>' + g.label + '</b>' + tipRow(g.color, fmt(sums[g.key]), Math.round(sums[g.key] / total * 100) + '%'), ev));
+      el.addEventListener('pointerleave', () => { tip.hidden = true; });
+    });
   }
 
   const tip = $('tip');
@@ -625,6 +762,11 @@
           ? c.name + ': approximate preset. Pension = share of gross salary × (years contributed ÷ full career), treated as net.'
           : 'No formula for this country: enter each exact pension.',
       'Past years are assumed to have earned points at today\'s rate unless you enter the points from your statement. Worth confirming with an accountant: whether a PFA may declare a base above 24 minimum salaries, that a PFA pays nothing into Pilon II, and which minimum salary applies to the 2026 base.',
+      'Each account grows by its own rules: investments follow their stock/bond mix, a deposit earns ' + p.market.depositReal + '% and ' + (c.mode === 'ro' ? 'Fidelis/Tezaur' : 'government bonds') + ' ' + p.market.govReal + '% a year above inflation, and cash loses inflation (' + p.market.inflation + '% a year). Fees come off every year.',
+      'Tax is charged every year on the gain before inflation, so a deposit can lose money in today\'s terms. ' + (c.mode === 'ro'
+        ? 'Romania 2026 rates: deposits 10%, Fidelis/Tezaur 0%, Romanian broker and bank funds 3% (6% if held under a year; taxing it yearly instead of on sale is a simplification), foreign broker 16%. CASS on investment income is not included: 10% of 6, 12 or 24 minimum salaries once that income passes those levels; worth confirming with an accountant.'
+        : 'Tax rates outside Romania start at 0%; enter yours for each account.'),
+      'Withdrawals come from all accounts in proportion to their balances, which keeps the mix steady. With a cash cushion, spending comes from the investments in normal years and the safe accounts are refilled to the chosen number of years; after a year when markets fell, spending comes from the safe money first.',
       'Not included: taxes and payout rules on Pilon II/III, career phases (for example employee before, PFA now), wage growth, and one partner outliving the other. This is a planning aid, not financial advice.'
     ];
     $('notes').innerHTML = items.map(t => '<li>' + esc(t) + '</li>').join('');
@@ -647,7 +789,10 @@
     clearTimeout(timer);
     timer = setTimeout(renderAnswer, 180);
   }
-  function changed() { store.set(LS_CURRENT, plan); compute(); }
+  function changed() {
+    if (hasAccounts()) plan.liquid = accTotal();
+    store.set(LS_CURRENT, plan); compute();
+  }
   function refresh() { renderForm(); changed(); }
 
   /* ---------- Events ---------- */
@@ -676,6 +821,12 @@
     const el = ev.target, path = el.dataset.path;
     if (path) plan.example = false;
     if (el.hasAttribute('data-money')) { el.value = grouped(getPath(plan, path)); return; }
+    if (el.dataset.accType != null) {
+      const i = +el.dataset.accType, old = plan.accounts[i];
+      plan.accounts[i] = Object.assign(E.accountDefaults(el.value, plan.country), { balance: old.balance });
+      return refresh();
+    }
+    if (el.hasAttribute('data-savings-to')) { plan.savingsTo = el.value === '' ? null : +el.value; return refresh(); }
     if (el.tagName === 'SELECT' && path) {
       if (path === 'country') applyCountry(el.value); else setPath(plan, path, el.value);
       refresh();
@@ -690,7 +841,22 @@
     if (!t) return;
     if (!t.dataset.how && t.id !== 'reset') plan.example = false;
     const list = store.get(LS_SCENARIOS, []);
-    if (t.dataset.cur) { setCurrency(t.dataset.cur); refresh(); }
+    if (t.hasAttribute('data-quiz')) { if (window.RetQuiz) window.RetQuiz.open(); }
+    else if (t.id === 'useTotal') { confirmTotal = true; renderForm(); $('useTotalYes').focus(); }
+    else if (t.id === 'useTotalNo') { confirmTotal = false; renderForm(); $('useTotal').focus(); }
+    else if (t.id === 'useTotalYes') { plan.liquid = accTotal(); plan.accounts = []; plan.savingsTo = null; confirmTotal = false; fxMemo = {}; refresh(); }
+    else if (t.hasAttribute('data-acc-add')) {
+      plan.accounts = (plan.accounts || []).concat([E.accountDefaults(hasAccounts() ? 'broker_ro' : 'generic', plan.country)]);
+      // The first account takes over the single pot so nothing is lost
+      if (plan.accounts.length === 1) Object.assign(plan.accounts[0], { balance: plan.liquid || 0, stockPct: plan.market.stockPct, feePct: plan.market.feePct });
+      fxMemo = {}; refresh();
+    } else if (t.dataset.accDel != null) {
+      const i = +t.dataset.accDel;
+      plan.accounts.splice(i, 1);
+      if (plan.savingsTo != null) plan.savingsTo = plan.savingsTo === i ? null : plan.savingsTo > i ? plan.savingsTo - 1 : plan.savingsTo;
+      plan.liquid = accTotal(); fxMemo = {}; refresh();
+    }
+    else if (t.dataset.cur) { setCurrency(t.dataset.cur); refresh(); }
     else if (t.dataset.single != null) { plan.single = t.dataset.single === '1'; refresh(); }
     else if (t.dataset.toggle) { setPath(plan, t.dataset.toggle, !getPath(plan, t.dataset.toggle)); refresh(); }
     else if (t.dataset.how != null) { howOpen[+t.dataset.how] = !howOpen[+t.dataset.how]; if (last) renderExplain(last.plan, last.res); }
@@ -699,7 +865,7 @@
       const at = list.findIndex(s => s.name === name), entry = { name, plan: clone(plan) };
       if (at >= 0) list[at] = entry; else list.push(entry);
       store.set(LS_SCENARIOS, list); $('scenName').value = ''; renderScenarios();
-    } else if (t.id === 'reset') { plan = defaultPlan(); fxMemo = {}; refresh(); }
+    } else if (t.id === 'reset') { plan = defaultPlan(); fxMemo = {}; confirmTotal = false; refresh(); }
     else if (t.dataset.load != null) { plan = hydrate(list[+t.dataset.load].plan); fxMemo = {}; refresh(); }
     else if (t.dataset.del != null) { list.splice(+t.dataset.del, 1); store.set(LS_SCENARIOS, list); renderScenarios(); }
   });
@@ -724,6 +890,15 @@
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { if (last) { renderWealth(last.plan, last.res); renderYearByYear(); } }, 150);
   });
+
+  $('money').addEventListener('click', ev => { if (ev.target.closest('[data-quiz]') && window.RetQuiz) window.RetQuiz.open(); });
+  if (window.RetQuiz) {
+    window.RetQuiz.mount({
+      getPlan: () => plan,
+      setPlan: p => { plan = p; fxMemo = {}; confirmTotal = false; refresh(); $('answer').scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+      cleanPlan, renderMoney, startYear
+    });
+  }
 
   // Entrance animation runs once, not on later re-renders
   document.body.classList.add('intro');
